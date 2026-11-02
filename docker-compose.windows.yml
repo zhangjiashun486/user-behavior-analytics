@@ -1,0 +1,124 @@
+# Windows local profile; original docker-compose.yml remains unchanged.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+    - ./containers/upstream:/docker-entrypoint-initdb.d
+    - ./data:/input_data
+    - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD
+      - pg_isready
+      - -U
+      - airflow
+      interval: 5s
+      retries: 5
+    ports:
+    - 127.0.0.1:15432:5432
+  airflow-webserver:
+    build: &id001
+      context: ./containers/airflow/
+      dockerfile: Dockerfile.windows
+    environment: &id002
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.basic_auth
+      AIRFLOW_CONN_POSTGRES_DEFAULT: postgres://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__CORE__PARALLELISM: '1'
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '1'
+      AIRFLOW__WEBSERVER__WORKERS: '2'
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AIRFLOW_CONN_AWS_DEFAULT: '{"conn_type":"aws","login":"minio","password":"minio123","extra":{"endpoint_url":"http://minio:9000","region_name":"us-east-1"}}'
+      AIRFLOW_CONN_SPARK_CONN: spark://local
+      SPARK_SUBMIT_OPTS: '-Dhttps.proxyHost=http.docker.internal -Dhttps.proxyPort=3128 -Dhttp.proxyHost=http.docker.internal -Dhttp.proxyPort=3128 -Dhttp.nonProxyHosts=localhost|127.*|minio|postgres|*.docker.internal'
+    volumes: &id003
+    - ./dags:/opt/airflow/dags
+    - ./data:/opt/airflow/data
+    - ./visualization:/opt/airflow/visualization
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./tests:/opt/airflow/tests
+    - ./temp:/opt/airflow/temp
+    user: '50000:0'
+    depends_on: &id004
+      postgres:
+        condition: service_healthy
+    command: webserver
+    ports:
+    - 127.0.0.1:18080:8080
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - --fail
+      - http://localhost:8080/health
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  airflow-scheduler:
+    build: *id001
+    environment: *id002
+    volumes: *id003
+    user: '50000:0'
+    depends_on: *id004
+    command: scheduler
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"
+      interval: 10s
+      timeout: 10s
+      retries: 5
+  airflow-init:
+    build: *id001
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.basic_auth
+      AIRFLOW_CONN_POSTGRES_DEFAULT: postgres://airflow:airflow@postgres:5432/airflow
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__CORE__PARALLELISM: '2'
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '2'
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AIRFLOW_CONN_AWS_DEFAULT: '{"conn_type":"aws","login":"minio","password":"minio123","extra":{"endpoint_url":"http://minio:9000","region_name":"us-east-1"}}'
+      AIRFLOW_CONN_SPARK_CONN: spark://local
+    volumes: *id003
+    user: '50000:0'
+    depends_on: *id004
+    command: version
+  minio:
+    image: career-data-minio:local
+    build:
+      context: ./containers/minio
+    hostname: minio
+    ports:
+    - 127.0.0.1:19000:9000
+    - 127.0.0.1:19001:9001
+    environment:
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    command: server --console-address ":9001" /data
+    volumes:
+    - minio-data:/data
+name: career-data
+volumes:
+  postgres-data: {}
+  minio-data: {}

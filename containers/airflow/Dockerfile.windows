@@ -1,0 +1,23 @@
+FROM apache/airflow:2.9.2
+
+# Retain the tutorial dependencies, but keep the actual engine versions fixed.
+COPY requirements.txt /
+RUN pip install --no-cache-dir "apache-airflow==2.9.2" "pyspark==3.5.1" "numpy==1.26.4" -r /requirements.txt
+
+COPY quarto.sh /
+RUN cd / && bash /quarto.sh
+COPY setup_conn.py $AIRFLOW_HOME
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jre-headless \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+# PySpark includes the Spark distribution; avoid a second mismatched download.
+RUN python -c "import os,pyspark; os.symlink(os.path.dirname(pyspark.__file__),'/home/airflow/spark')"
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV SPARK_HOME=/home/airflow/spark
+ENV PATH=$SPARK_HOME/bin:$JAVA_HOME/bin:$PATH
+
+# Match the compatibility pair shipped in this Airflow image's constraints.txt.
+RUN pip install --no-cache-dir "cryptography==41.0.7" "pyOpenSSL==24.1.0"
